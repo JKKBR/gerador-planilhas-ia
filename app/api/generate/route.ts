@@ -1,21 +1,213 @@
 import { NextResponse } from "next/server";
+
 import { workbookSchema } from "@/lib/schema";
 import { template } from "@/lib/templates";
-export const runtime="nodejs";
-export async function POST(req:Request){
- try{
-  const {category,instruction,current}=await req.json();
-  if(!instruction || typeof instruction!=="string") return NextResponse.json({error:"Descreva a planilha desejada."},{status:400});
-  if(instruction.length>4000) return NextResponse.json({error:"Pedido muito longo."},{status:400});
-  const key=process.env.GEMINI_API_KEY;
-  if(!key) return NextResponse.json({workbook: current || template(category), warning:"Modo de demonstração: configure GEMINI_API_KEY para usar a IA."});
-  const model=process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const prompt=`Você é um projetista de planilhas Excel para uso interno. Retorne SOMENTE o workbook no esquema fornecido. Categoria: ${category}. Pedido: ${instruction}. ${current?`Planilha atual: ${JSON.stringify(current)}. Preserve tudo que não foi solicitado e aplique a alteração.`:"Crie uma planilha útil do zero."} Regras: nomes e conteúdo em pt-BR; no máximo 8 abas, 20 colunas e 30 linhas de exemplo; inclua abas com nexo entre si; inclua Dashboard quando houver dados numéricos; chaves de coluna sem espaços; fórmulas Excel em inglês usando {row}, por exemplo C{row}*D{row}; não crie macros, links externos nem código.`;
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
-  const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:"application/json",responseJsonSchema:workbookSchema,temperature:0.2}})});
-  if(!response.ok){ const detail=await response.text(); console.error(detail); return NextResponse.json({error:"Não foi possível gerar com a IA. Verifique a chave e o modelo."},{status:502}); }
-  const data=await response.json(); const text=data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if(!text) return NextResponse.json({error:"A IA não retornou uma planilha."},{status:502});
-  return NextResponse.json({workbook:JSON.parse(text)});
- }catch(e){console.error(e);return NextResponse.json({error:"Erro ao processar o pedido."},{status:500});}
+
+export const runtime = "nodejs";
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+
+    const category = body.category;
+    const instruction = body.instruction;
+    const current = body.current;
+
+    if (!instruction || typeof instruction !== "string") {
+      return NextResponse.json(
+        {
+          error: "Descreva a planilha desejada.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    if (instruction.length > 8000) {
+      return NextResponse.json(
+        {
+          error: "O pedido ultrapassou o limite de 8.000 caracteres.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      return NextResponse.json({
+        workbook: current || template(category),
+        warning:
+          "Modo de demonstração: GEMINI_API_KEY não foi encontrada.",
+      });
+    }
+
+    const model =
+      process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+
+    const prompt = `
+Você é um projetista de planilhas Excel para uso interno.
+
+Categoria selecionada:
+${category}
+
+Solicitação:
+${instruction}
+
+${
+  current
+    ? `Planilha atual:
+${JSON.stringify(current)}
+
+Preserve tudo o que não foi solicitado e aplique somente as alterações necessárias.`
+    : "Crie uma planilha útil do zero."
+}
+
+Regras:
+- Use português do Brasil.
+- Crie no máximo 8 abas.
+- Crie no máximo 20 colunas por aba.
+- Inclua até 20 linhas de exemplo.
+- Crie abas relacionadas entre si.
+- Inclua uma aba Dashboard quando houver dados numéricos.
+- Use chaves de coluna sem espaços e sem acentos.
+- Use fórmulas do Excel em inglês.
+- Nas fórmulas, use {row} para representar a linha.
+- Não crie macros.
+- Não crie links externos.
+- Não produza código executável.
+- Retorne somente o objeto JSON solicitado.
+`;
+
+    const endpoint =
+      `https://generativelanguage.googleapis.com/v1beta/models/` +
+      `${encodeURIComponent(model)}:generateContent`;
+
+    const geminiResponse = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: prompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: workbookSchema,
+          temperature: 0.2,
+        },
+      }),
+    });
+
+    const responseText = await geminiResponse.text();
+
+    if (!geminiResponse.ok) {
+      console.error("Erro retornado pelo Gemini:", {
+        status: geminiResponse.status,
+        model,
+        response: responseText,
+      });
+
+      let geminiMessage = responseText;
+
+      try {
+        const parsedError = JSON.parse(responseText);
+
+        geminiMessage =
+          parsedError?.error?.message ||
+          parsedError?.message ||
+          responseText;
+      } catch {
+        // Mantém a resposta textual original.
+      }
+
+      return NextResponse.json(
+        {
+          error: `Gemini respondeu com HTTP ${geminiResponse.status}: ${geminiMessage}`,
+          model,
+        },
+        {
+          status: 502,
+        }
+      );
+    }
+
+    const geminiData = JSON.parse(responseText);
+
+    const generatedText =
+      geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!generatedText) {
+      console.error(
+        "Resposta do Gemini sem conteúdo:",
+        responseText
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "O Gemini respondeu, mas não retornou a estrutura da planilha.",
+          model,
+        },
+        {
+          status: 502,
+        }
+      );
+    }
+
+    let workbook;
+
+    try {
+      workbook = JSON.parse(generatedText);
+    } catch {
+      console.error(
+        "JSON inválido retornado pelo Gemini:",
+        generatedText
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "O Gemini respondeu, mas o conteúdo não era um JSON válido.",
+          model,
+        },
+        {
+          status: 502,
+        }
+      );
+    }
+
+    return NextResponse.json({
+      workbook,
+      model,
+    });
+  } catch (error) {
+    console.error("Erro interno em /api/generate:", error);
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Erro interno desconhecido.";
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      {
+        status: 500,
+      }
+    );
+  }
 }
