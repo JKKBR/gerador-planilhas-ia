@@ -46,14 +46,25 @@ function validWorkbook(value: unknown): value is WorkbookModel {
 }
 
 function parseModelJson(text: string): unknown {
-  return JSON.parse(
-    text
-      .trim()
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim()
-  );
+  const cleaned = text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+      throw new Error("Resposta sem objeto JSON.");
+    }
+
+    return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+  }
 }
 
 function getGeminiError(raw: string) {
@@ -89,7 +100,7 @@ export async function POST(request: Request) {
     if (instruction === "__diagnostico__") {
       return NextResponse.json({
         ok: true,
-        routeVersion: "generate-v2-resumos-v2",
+        routeVersion: "generate-v2-json-v3",
         model: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
         hasApiKey: Boolean(process.env.GEMINI_API_KEY),
       });
@@ -161,7 +172,17 @@ Preserve abas e fórmulas existentes que não foram solicitadas para alteração
         "x-goog-api-key": apiKey,
       },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.1,
+          maxOutputTokens: 16000,
+        },
       }),
       cache: "no-store",
     });
@@ -181,9 +202,24 @@ Preserve abas e fórmulas existentes que não foram solicitadas para alteração
     }
 
     const envelope = JSON.parse(raw);
-    const text = envelope?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const candidate = envelope?.candidates?.[0];
+    const finishReason = candidate?.finishReason;
 
-    if (typeof text !== "string") {
+    if (finishReason === "MAX_TOKENS" || finishReason === "LENGTH") {
+      return NextResponse.json(
+        {
+          error:
+            "A resposta do Gemini ficou grande demais. Tente solicitar menos abas ou menos dados de exemplo.",
+        },
+        { status: 502 }
+      );
+    }
+
+    const text = candidate?.content?.parts
+      ?.map((part: { text?: string }) => part.text || "")
+      .join("");
+
+    if (typeof text !== "string" || !text.trim()) {
       return NextResponse.json(
         { error: "O Gemini não retornou texto." },
         { status: 502 }
@@ -211,7 +247,7 @@ Preserve abas e fórmulas existentes que não foram solicitadas para alteração
     return NextResponse.json({
       workbook,
       model,
-      routeVersion: "generate-v2-resumos-v2",
+      routeVersion: "generate-v2-json-v3",
     });
   } catch (error) {
     const message =
