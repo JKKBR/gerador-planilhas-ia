@@ -82,6 +82,18 @@ function guardedFormula(
   return `IF($${guardColumnLetter}${rowNumber}="","",${formula})`;
 }
 
+function toExcelValue(value: unknown) {
+  if (
+    typeof value === "string" &&
+    value.trim().startsWith("=")
+  ) {
+    return {
+      formula: value.trim().slice(1),
+    };
+  }
+
+  return value ?? null;
+}
 export async function exportXlsx(model: WorkbookModel) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
@@ -124,11 +136,13 @@ export async function exportXlsx(model: WorkbookModel) {
       horizontal: "center",
     };
 
-    for (const sourceRow of sheet.rows) {
-      worksheet.addRow(
-        sheet.columns.map((column) => sourceRow[column.key] ?? null)
-      );
-    }
+for (const sourceRow of sheet.rows) {
+  worksheet.addRow(
+    sheet.columns.map((column) =>
+      toExcelValue(sourceRow[column.key])
+    )
+  );
+}
 
     const requestedPreparedRows = preparedRowCount(
       model,
