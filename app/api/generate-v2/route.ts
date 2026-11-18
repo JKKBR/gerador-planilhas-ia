@@ -13,6 +13,17 @@ const categories: Category[] = [
   "Personalizada",
 ];
 
+// Lista de modelos gratuitos em ordem de prioridade (principal + reservas)
+const FALLBACK_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-3.8-flash",
+];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -76,6 +87,91 @@ function getGeminiError(raw: string) {
   }
 }
 
+async function callGeminiWithFallback(
+  apiKey: string,
+  prompt: string,
+  primaryModel?: string
+) {
+  // Monta a fila sem duplicar o modelo principal caso já esteja na lista
+  const modelsQueue = primaryModel
+    ? [primaryModel, ...FALLBACK_MODELS.filter((m) => m !== primaryModel)]
+    : FALLBACK_MODELS;
+
+  let lastStatus = 502;
+  let lastErrorMessage = "Falha ao comunicar com a API do Gemini.";
+
+  for (const currentModel of modelsQueue) {
+    const endpoint =
+      `[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)` +
+      `${encodeURIComponent(currentModel)}:generateContent`;
+
+    // Tenta até 2 vezes no mesmo modelo antes de pular para o próximo
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: prompt }],
+            },
+          ],
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+            maxOutputTokens: 16000,
+          },
+        }),
+        cache: "no-store",
+      });
+
+      const raw = await response.text();
+
+      if (response.ok) {
+        return { ok: true as const, raw, usedModel: currentModel };
+      }
+
+      lastStatus = response.status;
+      lastErrorMessage = getGeminiError(raw);
+      console.warn(
+        `Gemini falha (${currentModel}, tentativa ${attempt}): HTTP ${response.status}`,
+        lastErrorMessage
+      );
+
+      // Se for 503 (alta demanda) ou 429 (limite temporário), espera um pouco e tenta de novo
+      if (response.status === 503 || response.status === 429) {
+        if (attempt === 1) {
+          await sleep(1500);
+          continue;
+        }
+        // Na segunda falha consecutiva desse modelo, sai do loop interno e vai para o próximo modelo
+        break;
+      }
+
+      // Se for erro de chave inválida (400/403) ou erro fatal, não adianta tentar outros modelos
+      if (response.status === 400 || response.status === 403) {
+        return {
+          ok: false as const,
+          status: lastStatus,
+          error: lastErrorMessage,
+        };
+      }
+
+      break;
+    }
+  }
+
+  return {
+    ok: false as const,
+    status: lastStatus,
+    error: lastErrorMessage,
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -100,8 +196,9 @@ export async function POST(request: Request) {
     if (instruction === "__diagnostico__") {
       return NextResponse.json({
         ok: true,
-        routeVersion: "generate-v2-json-v3",
-        model: process.env.GEMINI_MODEL || "gemini-3.5-flash-lite",
+        routeVersion: "generate-v2-json-v3-fallback",
+        model: process.env.GEMINI_MODEL || FALLBACK_MODELS[0],
+        fallbackModels: FALLBACK_MODELS,
         hasApiKey: Boolean(process.env.GEMINI_API_KEY),
       });
     }
@@ -115,7 +212,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+    const primaryModel = process.env.GEMINI_MODEL || FALLBACK_MODELS[0];
 
     const prompt = `Retorne somente JSON válido, sem Markdown.
 Crie ou altere uma planilha Excel da categoria ${category}.
@@ -161,47 +258,18 @@ Exemplos para orçamento:
 
 Preserve abas e fórmulas existentes que não foram solicitadas para alteração.`;
 
-    const endpoint =
-      `https://generativelanguage.googleapis.com/v1beta/models/` +
-      `${encodeURIComponent(model)}:generateContent`;
+    const result = await callGeminiWithFallback(apiKey, prompt, primaryModel);
 
-    const geminiResponse = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": apiKey,
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-          maxOutputTokens: 16000,
-        },
-      }),
-      cache: "no-store",
-    });
-
-    const raw = await geminiResponse.text();
-
-    if (!geminiResponse.ok) {
-      const geminiError = getGeminiError(raw);
-      console.error("Gemini v2 error", geminiResponse.status, raw);
-
+    if (!result.ok) {
       return NextResponse.json(
         {
-          error: `Gemini HTTP ${geminiResponse.status}: ${geminiError}`,
+          error: `Gemini HTTP ${result.status}: ${result.error}`,
         },
         { status: 502 }
       );
     }
 
-    const envelope = JSON.parse(raw);
+    const envelope = JSON.parse(result.raw);
     const candidate = envelope?.candidates?.[0];
     const finishReason = candidate?.finishReason;
 
@@ -246,8 +314,8 @@ Preserve abas e fórmulas existentes que não foram solicitadas para alteração
 
     return NextResponse.json({
       workbook,
-      model,
-      routeVersion: "generate-v2-json-v3",
+      model: result.usedModel,
+      routeVersion: "generate-v2-json-v3-fallback",
     });
   } catch (error) {
     const message =
