@@ -28,7 +28,7 @@ export async function exportXlsx(model: WorkbookModel) {
   workbook.created = new Date();
   workbook.modified = new Date();
   workbook.calcProperties.fullCalcOnLoad = true;
-  workbook.calcProperties.forceFullCalc = true;
+
 
   for (const sheet of model.sheets) {
     const worksheet = workbook.addWorksheet(
