@@ -92,7 +92,6 @@ async function callGeminiWithFallback(
   prompt: string,
   primaryModel?: string
 ) {
-  // Monta a fila sem duplicar o modelo principal caso já esteja na lista
   const modelsQueue = primaryModel
     ? [primaryModel, ...FALLBACK_MODELS.filter((m) => m !== primaryModel)]
     : FALLBACK_MODELS;
@@ -101,11 +100,10 @@ async function callGeminiWithFallback(
   let lastErrorMessage = "Falha ao comunicar com a API do Gemini.";
 
   for (const currentModel of modelsQueue) {
-    const endpoint =
-      `[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/)` +
-      `${encodeURIComponent(currentModel)}:generateContent`;
+    const cleanModel = currentModel.trim();
+    const baseUrl = "https://generativelanguage.googleapis.com/v1beta/models";
+    const endpoint = `${baseUrl}/${encodeURIComponent(cleanModel)}:generateContent`;
 
-    // Tenta até 2 vezes no mesmo modelo antes de pular para o próximo
     for (let attempt = 1; attempt <= 2; attempt++) {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -132,27 +130,31 @@ async function callGeminiWithFallback(
       const raw = await response.text();
 
       if (response.ok) {
-        return { ok: true as const, raw, usedModel: currentModel };
+        return { ok: true as const, raw, usedModel: cleanModel };
       }
 
       lastStatus = response.status;
       lastErrorMessage = getGeminiError(raw);
       console.warn(
-        `Gemini falha (${currentModel}, tentativa ${attempt}): HTTP ${response.status}`,
+        `Gemini falha (${cleanModel}, tentativa ${attempt}): HTTP ${response.status}`,
         lastErrorMessage
       );
 
-      // Se for 503 (alta demanda) ou 429 (limite temporário), espera um pouco e tenta de novo
+      // Se o modelo não existir (404), pula direto para o próximo modelo sem repetir
+      if (response.status === 404) {
+        break;
+      }
+
+      // Se for 503 (alta demanda) ou 429 (limite), espera 1,5s e tenta novamente
       if (response.status === 503 || response.status === 429) {
         if (attempt === 1) {
           await sleep(1500);
           continue;
         }
-        // Na segunda falha consecutiva desse modelo, sai do loop interno e vai para o próximo modelo
         break;
       }
 
-      // Se for erro de chave inválida (400/403) ou erro fatal, não adianta tentar outros modelos
+      // Erro de chave inválida (400/403) para imediatamente
       if (response.status === 400 || response.status === 403) {
         return {
           ok: false as const,
