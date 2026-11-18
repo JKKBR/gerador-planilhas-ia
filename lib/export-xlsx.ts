@@ -1,5 +1,13 @@
 import type { WorkbookModel } from "./types";
 
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function safeSheetName(name: string) {
   return name.replace(/[\\/*?:[\]]/g, " ").trim().slice(0, 31) || "Planilha";
 }
@@ -19,6 +27,61 @@ function uniqueSheetName(name: string, used: Set<string>) {
   return candidate;
 }
 
+function preparedRowCount(
+  workbook: WorkbookModel,
+  sheetName: string,
+  sheetId: string
+) {
+  const category = normalizeText(workbook.category);
+  const identity = normalizeText(`${sheetName} ${sheetId}`);
+
+  if (identity.includes("moviment")) {
+    return 1000;
+  }
+
+  if (
+    category === "financas" &&
+    (identity.includes("lancamento") || identity.includes("transacao"))
+  ) {
+    return 1000;
+  }
+
+  if (
+    category === "orcamento" &&
+    (identity.includes("item") || identity.includes("produto orcado"))
+  ) {
+    return 500;
+  }
+
+  if (
+    identity.includes("cadastro") ||
+    identity.includes("produto") ||
+    identity.includes("peca") ||
+    identity.includes("fornecedor") ||
+    identity.includes("cliente")
+  ) {
+    return 300;
+  }
+
+  return 0;
+}
+
+function cleanFormula(expression: string, rowNumber: number) {
+  return expression
+    .trim()
+    .replace(/^=/, "")
+    .replaceAll("{row}", String(rowNumber));
+}
+
+function guardedFormula(
+  expression: string,
+  rowNumber: number,
+  guardColumnLetter: string
+) {
+  const formula = cleanFormula(expression, rowNumber);
+  return `IF($${guardColumnLetter}${rowNumber}="","",${formula})`;
+}
+
 export async function exportXlsx(model: WorkbookModel) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
@@ -28,7 +91,6 @@ export async function exportXlsx(model: WorkbookModel) {
   workbook.created = new Date();
   workbook.modified = new Date();
   workbook.calcProperties.fullCalcOnLoad = true;
-
 
   for (const sheet of model.sheets) {
     const worksheet = workbook.addWorksheet(
@@ -63,28 +125,85 @@ export async function exportXlsx(model: WorkbookModel) {
     };
 
     for (const sourceRow of sheet.rows) {
-      const values = sheet.columns.map(
-        (column) => sourceRow[column.key] ?? null
+      worksheet.addRow(
+        sheet.columns.map((column) => sourceRow[column.key] ?? null)
       );
-      worksheet.addRow(values);
     }
 
-    for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+    const requestedPreparedRows = preparedRowCount(
+      model,
+      sheet.name,
+      sheet.id
+    );
+    const totalDataRows = Math.max(
+      sheet.rows.length,
+      requestedPreparedRows
+    );
+    const lastRowNumber = Math.max(1, totalDataRows + 1);
+
+    const formulaKeys = new Set(
+      (sheet.formulas || []).map((formula) => formula.key)
+    );
+    const guardColumnIndex = Math.max(
+      1,
+      sheet.columns.findIndex(
+        (column) => !formulaKeys.has(column.key)
+      ) + 1
+    );
+    const guardColumnLetter = worksheet.getColumn(guardColumnIndex).letter;
+
+    for (let rowNumber = 2; rowNumber <= lastRowNumber; rowNumber += 1) {
       const row = worksheet.getRow(rowNumber);
+      const isPreparedBlankRow = rowNumber > sheet.rows.length + 1;
+
+      row.height = 20;
+
+      for (
+        let columnIndex = 1;
+        columnIndex <= sheet.columns.length;
+        columnIndex += 1
+      ) {
+        const cell = row.getCell(columnIndex);
+
+        cell.alignment = {
+          vertical: "middle",
+          horizontal:
+            sheet.columns[columnIndex - 1].type === "text" ||
+            sheet.columns[columnIndex - 1].type === "status"
+              ? "left"
+              : "right",
+        };
+
+        cell.border = {
+          bottom: {
+            style: "hair",
+            color: { argb: "FFE2E8F0" },
+          },
+        };
+
+        if (isPreparedBlankRow && !formulaKeys.has(sheet.columns[columnIndex - 1].key)) {
+          cell.font = { color: { argb: "FF0000FF" } };
+        }
+      }
 
       for (const formula of sheet.formulas || []) {
-        const columnIndex =
+        const formulaColumnIndex =
           sheet.columns.findIndex(
             (column) => column.key === formula.key
           ) + 1;
 
-        if (columnIndex > 0) {
-          row.getCell(columnIndex).value = {
-            formula: formula.expression.replaceAll(
-              "{row}",
-              String(rowNumber)
-            ),
+        if (formulaColumnIndex > 0) {
+          const formulaCell = row.getCell(formulaColumnIndex);
+          formulaCell.value = {
+            formula: isPreparedBlankRow
+              ? guardedFormula(
+                  formula.expression,
+                  rowNumber,
+                  guardColumnLetter
+                )
+              : cleanFormula(formula.expression, rowNumber),
           };
+          formulaCell.font = { color: { argb: "FF000000" } };
         }
       }
 
@@ -113,11 +232,11 @@ export async function exportXlsx(model: WorkbookModel) {
       }
     });
 
-    if (sheet.columns.length > 0 && worksheet.rowCount > 1) {
+    if (sheet.columns.length > 0 && lastRowNumber > 1) {
       worksheet.autoFilter = {
         from: { row: 1, column: 1 },
         to: {
-          row: worksheet.rowCount,
+          row: lastRowNumber,
           column: sheet.columns.length,
         },
       };
@@ -128,9 +247,9 @@ export async function exportXlsx(model: WorkbookModel) {
         (column) => column.type === "status"
       ) + 1;
 
-    if (statusColumnIndex > 0 && worksheet.rowCount > 1) {
+    if (statusColumnIndex > 0 && lastRowNumber > 1) {
       const letter = worksheet.getColumn(statusColumnIndex).letter;
-      const range = `${letter}2:${letter}${worksheet.rowCount}`;
+      const range = `${letter}2:${letter}${lastRowNumber}`;
 
       worksheet.addConditionalFormatting({
         ref: range,
@@ -146,7 +265,10 @@ export async function exportXlsx(model: WorkbookModel) {
                 pattern: "solid",
                 fgColor: { argb: "FFFECACA" },
               },
-              font: { color: { argb: "FF991B1B" }, bold: true },
+              font: {
+                color: { argb: "FF991B1B" },
+                bold: true,
+              },
             },
           } as any,
           {
@@ -160,7 +282,10 @@ export async function exportXlsx(model: WorkbookModel) {
                 pattern: "solid",
                 fgColor: { argb: "FFFEF3C7" },
               },
-              font: { color: { argb: "FF92400E" }, bold: true },
+              font: {
+                color: { argb: "FF92400E" },
+                bold: true,
+              },
             },
           } as any,
           {
@@ -174,27 +299,15 @@ export async function exportXlsx(model: WorkbookModel) {
                 pattern: "solid",
                 fgColor: { argb: "FFDCFCE7" },
               },
-              font: { color: { argb: "FF166534" }, bold: true },
+              font: {
+                color: { argb: "FF166534" },
+                bold: true,
+              },
             },
           } as any,
         ],
       });
     }
-
-    worksheet.eachRow((row) => {
-      row.eachCell((cell) => {
-        cell.border = {
-          top: { style: "thin", color: { argb: "FFE2E8F0" } },
-          left: { style: "thin", color: { argb: "FFE2E8F0" } },
-          bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
-          right: { style: "thin", color: { argb: "FFE2E8F0" } },
-        };
-        cell.alignment = {
-          ...cell.alignment,
-          vertical: "middle",
-        };
-      });
-    });
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
