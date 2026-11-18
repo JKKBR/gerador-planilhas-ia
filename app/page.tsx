@@ -68,7 +68,7 @@ export default function Home() {
     setMessage("Enviando pedido para a IA...");
 
     try {
-      const response = await fetch("/api/generate", {
+      const response = await fetch("/api/generate-v2", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
