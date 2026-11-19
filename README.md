@@ -18,6 +18,27 @@ O projeto não pretende substituir sistemas empresariais completos. O foco atual
 
 ---
 
+### Fallback entre modelos Gemini
+
+A integração utiliza uma fila de modelos de contingência.
+
+Ordem padrão:
+
+1. `gemini-3.5-flash-lite`
+2. `gemini-3.1-flash-lite`
+3. `gemini-3.8-flash`
+
+O modelo definido em `GEMINI_MODEL` é usado primeiro. Se ocorrer
+indisponibilidade temporária, limite de requisições ou modelo não
+encontrado, o servidor pode tentar os modelos seguintes.
+
+A resposta da API interna informa qual modelo gerou a planilha.
+
+O fallback melhora a disponibilidade, mas não substitui autenticação,
+rate limiting, controle de cotas ou monitoramento de consumo.
+
+---
+
 ## ✨ Recursos atuais
 
 - Geração de planilhas a partir de instruções em português;
