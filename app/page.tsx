@@ -32,6 +32,7 @@ export default function Home() {
     "Escolha um modelo e descreva o que deseja alterar."
   );
   const [history, setHistory] = useState<WorkbookModel[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   const sheet = book.sheets[active] || book.sheets[0];
 
@@ -118,6 +119,7 @@ export default function Home() {
       }
 
       setHistory((currentHistory) => [...currentHistory, book]);
+      setWarnings(Array.isArray(data.warnings) ? data.warnings : []);
       setBook(data.workbook);
       setActive(0);
       setText("");
@@ -144,6 +146,7 @@ export default function Home() {
     setBook(template(nextCategory));
     setActive(0);
     setHistory([]);
+    setWarnings([]);
     setMessage(
       `Modelo ${nextCategory} carregado. Agora descreva sua necessidade.`
     );
@@ -157,6 +160,27 @@ export default function Home() {
     setHistory((currentHistory) => currentHistory.slice(0, -1));
     setActive(0);
     setMessage("Última alteração desfeita.");
+  }
+
+  async function downloadWorkbook() {
+    setMessage("Validando fórmulas e preparando o arquivo...");
+    try {
+      const report = await exportXlsx(book);
+      if (!report.downloaded) {
+        const details = report.errors
+          .slice(0, 3)
+          .map((issue) => `${issue.sheet}${issue.cell ? ` ${issue.cell}` : ""}: ${issue.message}`)
+          .join(" | ");
+        setMessage(`Download bloqueado: ${details || "foram encontrados erros de validação."}`);
+        return;
+      }
+      setMessage(
+        `Arquivo gerado com ${report.formulaCount.toLocaleString("pt-BR")} fórmula(s)` +
+          (report.warnings.length ? ` e ${report.warnings.length} aviso(s).` : ".")
+      );
+    } catch (error) {
+      setMessage(`Erro ao exportar: ${error instanceof Error ? error.message : "erro desconhecido"}.`);
+    }
   }
 
   const max = Math.max(1, ...chart.map((item) => item.value));
@@ -173,7 +197,7 @@ export default function Home() {
             <span>Gerador interno para Excel</span>
           </div>
         </div>
-        <button className="download" onClick={() => exportXlsx(book)}>
+        <button className="download" onClick={() => void downloadWorkbook()}>
           <Download size={18} /> Baixar .xlsx
         </button>
       </header>
@@ -289,6 +313,11 @@ export default function Home() {
             <small>{book.description}</small>
           </div>
 
+          {warnings.length > 0 && (
+            <div className="bubble">
+              {warnings.slice(0, 3).join(" | ")}
+            </div>
+          )}
           <div className="tabs">
             {book.sheets.map((item, index) => (
               <button
