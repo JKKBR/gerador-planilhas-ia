@@ -5,6 +5,13 @@ import type {
   WorkbookModel,
 } from "./types";
 
+import {
+  cleanFormula,
+  localizeInstructionFormulaPtBr,
+  normalizeText,
+} from "./formula-utils";
+
+
 const ALLOWED_FUNCTIONS = new Set([
   "IF", "IFERROR", "AND", "OR", "NOT", "SUM", "SUMIF", "SUMIFS",
   "COUNT", "COUNTA", "COUNTIF", "COUNTIFS", "AVERAGE", "AVERAGEIF",
@@ -15,9 +22,7 @@ const ALLOWED_FUNCTIONS = new Set([
   "MONTH", "DAY",
 ]);
 
-function normalizeText(value: string) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-}
+
 
 function trimHumanText(value: unknown) {
   return typeof value === "string" && !value.trimStart().startsWith("=")
@@ -54,63 +59,6 @@ function legacyPreparedRowCount(model: WorkbookModel, sheetName: string, sheetId
 
 function requestedRows(model: WorkbookModel, sheet: WorkbookModel["sheets"][number]) {
   return Math.max(0, Math.min(5000, sheet.preparedRows ?? legacyPreparedRowCount(model, sheet.name, sheet.id)));
-}
-
-function cleanFormula(expression: string, rowNumber?: number) {
-  const withoutEquals = expression.trim().replace(/^=/, "").replace(/;/g, ",");
-  return rowNumber ? withoutEquals.replaceAll("{row}", String(rowNumber)) : withoutEquals;
-}
-
-function localizeInstructionFormulaPtBr(expression: string) {
-  let localized = cleanFormula(expression);
-
-  const translations: Array<[RegExp, string]> = [
-    [/\bFILTER\s*\(/gi, "FILTRO("],
-    [/\bSORT\s*\(/gi, "CLASSIFICAR("],
-    [/\bUNIQUE\s*\(/gi, "ÚNICO("],
-    [/\bXLOOKUP\s*\(/gi, "PROCX("],
-
-    // Coloque funções maiores antes das menores.
-    [/\bIFERROR\s*\(/gi, "SEERRO("],
-    [/\bCOUNTIFS\s*\(/gi, "CONT.SES("],
-    [/\bCOUNTIF\s*\(/gi, "CONT.SE("],
-    [/\bCOUNTA\s*\(/gi, "CONT.VALORES("],
-    [/\bCOUNT\s*\(/gi, "CONT.NÚM("],
-    [/\bSUMIFS\s*\(/gi, "SOMASES("],
-    [/\bSUMIF\s*\(/gi, "SOMASE("],
-    [/\bSUM\s*\(/gi, "SOMA("],
-    [/\bAVERAGEIFS\s*\(/gi, "MÉDIASES("],
-    [/\bAVERAGEIF\s*\(/gi, "MÉDIASE("],
-    [/\bAVERAGE\s*\(/gi, "MÉDIA("],
-
-    [/\bINDEX\s*\(/gi, "ÍNDICE("],
-    [/\bMATCH\s*\(/gi, "CORRESP("],
-    [/\bAGGREGATE\s*\(/gi, "AGREGAR("],
-    [/\bCOLUMNS\s*\(/gi, "COLS("],
-    [/\bCOLUMN\s*\(/gi, "COL("],
-    [/\bROWS\s*\(/gi, "LINS("],
-    [/\bROW\s*\(/gi, "LIN("],
-
-    [/\bROUNDUP\s*\(/gi, "ARREDONDAR.PARA.CIMA("],
-    [/\bROUNDDOWN\s*\(/gi, "ARREDONDAR.PARA.BAIXO("],
-    [/\bROUND\s*\(/gi, "ARRED("],
-
-    [/\bIF\s*\(/gi, "SE("],
-    [/\bAND\s*\(/gi, "E("],
-    [/\bOR\s*\(/gi, "OU("],
-    [/\bNOT\s*\(/gi, "NÃO("],
-    [/\bTODAY\s*\(/gi, "HOJE("],
-    [/\bYEAR\s*\(/gi, "ANO("],
-    [/\bMONTH\s*\(/gi, "MÊS("],
-    [/\bDAY\s*\(/gi, "DIA("],
-  ];
-
-  for (const [pattern, replacement] of translations) {
-    localized = localized.replace(pattern, replacement);
-  }
-
-  // Fórmulas digitadas manualmente no Excel em português usam ;.
-  return localized.replace(/,/g, ";");
 }
 
 function toExcelValue(value: unknown) {
