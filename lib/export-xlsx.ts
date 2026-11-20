@@ -50,9 +50,51 @@ function requestedRows(model: WorkbookModel, sheet: WorkbookModel["sheets"][numb
   return Math.max(0, Math.min(5000, sheet.preparedRows ?? legacyPreparedRowCount(model, sheet.name, sheet.id)));
 }
 
+function addExcelFutureFunctionPrefixes(expression: string) {
+  const worksheetOnly = ["FILTER", "SORT"];
+  const futureFunctions = ["UNIQUE", "XLOOKUP"];
+
+  // Protege fórmulas que já estão prefixadas.
+  let result = expression
+    .replace(
+      /_xlfn\._xlws\.(FILTER|SORT)\s*\(/gi,
+      (_match, fn) => `__WS_${String(fn).toUpperCase()}__(`
+    )
+    .replace(
+      /_xlfn\.(UNIQUE|XLOOKUP)\s*\(/gi,
+      (_match, fn) => `__FF_${String(fn).toUpperCase()}__(`
+    );
+
+  for (const fn of worksheetOnly) {
+    result = result.replace(
+      new RegExp(`\\b${fn}\\s*\\(`, "gi"),
+      `_xlfn._xlws.${fn}(`
+    );
+  }
+
+  for (const fn of futureFunctions) {
+    result = result.replace(
+      new RegExp(`\\b${fn}\\s*\\(`, "gi"),
+      `_xlfn.${fn}(`
+    );
+  }
+
+  return result
+    .replace(/__WS_(FILTER|SORT)__\(/g, "_xlfn._xlws.$1(")
+    .replace(/__FF_(UNIQUE|XLOOKUP)__\(/g, "_xlfn.$1(");
+}
+
 function cleanFormula(expression: string, rowNumber?: number) {
-  const withoutEquals = expression.trim().replace(/^=/, "").replace(/;/g, ",");
-  return rowNumber ? withoutEquals.replaceAll("{row}", String(rowNumber)) : withoutEquals;
+  const withoutEquals = expression
+    .trim()
+    .replace(/^=/, "")
+    .replace(/;/g, ",");
+
+  const withRow = rowNumber
+    ? withoutEquals.replaceAll("{row}", String(rowNumber))
+    : withoutEquals;
+
+  return addExcelFutureFunctionPrefixes(withRow);
 }
 
 function toExcelValue(value: unknown) {
