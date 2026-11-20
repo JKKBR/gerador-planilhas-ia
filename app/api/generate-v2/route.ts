@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import type { Formula, Sheet, WorkbookModel } from "@/lib/types";
+import {
+  formatWorkbookValidationErrors,
+  validateWorkbook,
+} from "@/lib/workbook-schema";
+import type { WorkbookModel } from "@/lib/types";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,65 +32,6 @@ const ALLOWED_FUNCTIONS = new Set([
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isCellValue(value: unknown) {
-  return value === null || ["string", "number", "boolean"].includes(typeof value);
-}
-
-function validFormula(value: unknown, columnKeys: Set<string>): value is Formula {
-  if (!isObject(value) || typeof value.expression !== "string" || !value.expression.trim()) {
-    return false;
-  }
-  const mode = typeof value.mode === "string" ? value.mode : "fill";
-  if (!ALLOWED_FORMULA_MODES.has(mode)) return false;
-
-  if (mode === "fill") {
-    if (typeof value.key !== "string" || !columnKeys.has(value.key)) return false;
-    if (value.fromRow !== undefined && (!Number.isInteger(value.fromRow) || Number(value.fromRow) < 2)) return false;
-    if (value.toRow !== undefined && (!Number.isInteger(value.toRow) || Number(value.toRow) < 2)) return false;
-    return true;
-  }
-
-  return typeof value.targetCell === "string" && /^[A-Z]{1,3}[1-9][0-9]*$/i.test(value.targetCell);
-}
-
-function validSheet(value: unknown): value is Sheet {
-  if (!isObject(value)) return false;
-  if (typeof value.id !== "string" || typeof value.name !== "string") return false;
-  if (!Array.isArray(value.columns) || value.columns.length < 1 || value.columns.length > 20) return false;
-  if (!Array.isArray(value.rows) || value.rows.length > 15) return false;
-  if (value.preparedRows !== undefined && (!Number.isInteger(value.preparedRows) || Number(value.preparedRows) < 0 || Number(value.preparedRows) > 5000)) return false;
-
-  const keys = new Set<string>();
-  for (const column of value.columns) {
-    if (!isObject(column) || typeof column.key !== "string" || typeof column.label !== "string") return false;
-    if (keys.has(column.key) || !ALLOWED_COLUMN_TYPES.has(String(column.type))) return false;
-    if (column.inputMode !== undefined && !["manual", "calculated"].includes(String(column.inputMode))) return false;
-    keys.add(column.key);
-  }
-
-  for (const row of value.rows) {
-    if (!isObject(row)) return false;
-    for (const [key, cellValue] of Object.entries(row)) {
-      if (!keys.has(key) || !isCellValue(cellValue)) return false;
-    }
-  }
-
-  if (value.formulas !== undefined) {
-    if (!Array.isArray(value.formulas) || !value.formulas.every((formula) => validFormula(formula, keys))) return false;
-  }
-  return true;
-}
-
-function validWorkbook(value: unknown): value is WorkbookModel {
-  if (!isObject(value) || typeof value.name !== "string") return false;
-  if (typeof value.description !== "string" || !categories.includes(value.category as Category)) return false;
-  return Array.isArray(value.sheets) && value.sheets.length >= 1 && value.sheets.length <= 8 && value.sheets.every(validSheet);
 }
 
 function parseModelJson(text: string): unknown {
@@ -223,7 +169,7 @@ export async function POST(request: Request) {
     if (instruction === "__diagnostico__") {
       return NextResponse.json({
         ok: true,
-        routeVersion: "generate-v2-formulas-v4",
+        routeVersion: "generate-v2-zod-v1",
         model: process.env.GEMINI_MODEL || FALLBACK_MODELS[0],
         fallbackModels: FALLBACK_MODELS,
         hasApiKey: Boolean(process.env.GEMINI_API_KEY),
@@ -286,16 +232,59 @@ REGRAS:
     } catch {
       return NextResponse.json({ error: "O Gemini retornou JSON inválido." }, { status: 502 });
     }
-    if (!validWorkbook(parsed)) return NextResponse.json({ error: "Estrutura de planilha inválida." }, { status: 502 });
+const validation = validateWorkbook(parsed);
 
-    const workbook = normalizeWorkbook(parsed);
+if (!validation.success) {
+  const details = formatWorkbookValidationErrors(
+    validation.error
+  );
+
+  console.error(
+    "Workbook inválido retornado pelo Gemini",
+    details
+  );
+
+  return NextResponse.json(
+    {
+      error:
+        "A IA retornou uma estrutura de planilha inválida.",
+      details: details.slice(0, 10),
+    },
+    {
+      status: 502,
+    }
+  );
+}
+
+if (validation.data.category !== category) {
+  return NextResponse.json(
+    {
+      error:
+        "A categoria retornada pela IA não corresponde à categoria solicitada.",
+      details: [
+        `Categoria solicitada: ${category}`,
+        `Categoria retornada: ${validation.data.category}`,
+      ],
+    },
+    {
+      status: 502,
+    }
+  );
+}
+
+const validatedWorkbook =
+  validation.data as WorkbookModel;
+
+const workbook = normalizeWorkbook(
+  validatedWorkbook
+);
     const warnings = workbookWarnings(workbook);
     return NextResponse.json({
       workbook,
       warnings,
       warning: warnings.length ? `Planilha gerada com ${warnings.length} aviso(s). Revise antes de baixar.` : undefined,
       model: result.usedModel,
-      routeVersion: "generate-v2-formulas-v4",
+      routeVersion: "generate-v2-zod-v1",
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Erro desconhecido.";
