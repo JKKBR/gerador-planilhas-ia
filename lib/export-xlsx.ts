@@ -154,8 +154,6 @@ export async function exportXlsx(model: WorkbookModel): Promise<ExportReport> {
   workbook.created = new Date();
   workbook.modified = new Date();
   workbook.calcProperties.fullCalcOnLoad = true;
-  workbook.calcProperties.forceFullCalc = true;
-  workbook.calcProperties.calcMode = "auto";
 
   const sheetNameMap = new Map<string, string>();
   for (const sheet of model.sheets) {
