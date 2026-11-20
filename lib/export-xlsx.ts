@@ -424,17 +424,16 @@ export async function exportXlsx(model: WorkbookModel): Promise<ExportReport> {
                 ? matchingRows[matchIndex]?.[sourceKey] ?? ""
                 : "";
 
-              worksheet.getCell(`${targetCol}${rowNumber}`).value = {
-                formula: buildLegacyFilterFormula(
-                  parsedFilter,
-                  parsedOutput.startCol,
-                  parsedOutput.startRow,
-                  targetCol,
-                  rowNumber
-                ),
-                result: cachedResult,
-              };
-              formulaCount++;
+              // Grava o resultado filtrado como valor estático. Isso evita que
+              // o Excel recalcule uma fórmula incompatível e apague a listagem.
+              // A fórmula original e a alternativa permanecem disponíveis na
+              // aba "Instruções e Fórmulas" para aplicação manual.
+              worksheet.getCell(`${targetCol}${rowNumber}`).value = cachedResult;
+              if (cachedResult !== "") {
+                worksheet.getCell(`${targetCol}${rowNumber}`).font = {
+                  color: { argb: "FF008000" },
+                };
+              }
             }
           }
           helpRows.push({
