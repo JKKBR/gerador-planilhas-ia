@@ -227,7 +227,17 @@ type FormulaHelpRow = {
 
 function addInstructionsSheet(workbook: any, rows: FormulaHelpRow[]) {
   if (!rows.length) return;
-  const worksheet = workbook.addWorksheet("Instruções e Fórmulas", {
+
+  const instructionsSheetName = "Instruções e Fórmulas";
+  const existingInstructionsSheet = workbook.getWorksheet(instructionsSheetName);
+
+  // A IA pode ter criado essa aba. Remove a versão anterior para que o
+  // exportador gere uma única aba padronizada, sem conflito de nomes.
+  if (existingInstructionsSheet) {
+    workbook.removeWorksheet(existingInstructionsSheet.id);
+  }
+
+  const worksheet = workbook.addWorksheet(instructionsSheetName, {
     views: [{ state: "frozen", ySplit: 5 }],
   });
 

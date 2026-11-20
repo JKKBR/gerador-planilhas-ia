@@ -266,6 +266,7 @@ REGRAS:
 - Preserve abas e fórmulas não solicitadas.
 - Remova espaços extras de nomes, status, peças, gerações e critérios.
 - Se a planilha tiver resumos por peça/categoria, crie uma fórmula fill para cada coluna calculada até preparedRows+1.
+- Nunca crie uma aba chamada "Instruções e Fórmulas". Essa aba é criada exclusivamente pelo exportador.
 `;
 
     const result = await callGeminiWithFallback(apiKey, prompt, process.env.GEMINI_MODEL || FALLBACK_MODELS[0]);
