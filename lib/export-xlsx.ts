@@ -61,6 +61,58 @@ function cleanFormula(expression: string, rowNumber?: number) {
   return rowNumber ? withoutEquals.replaceAll("{row}", String(rowNumber)) : withoutEquals;
 }
 
+function localizeInstructionFormulaPtBr(expression: string) {
+  let localized = cleanFormula(expression);
+
+  const translations: Array<[RegExp, string]> = [
+    [/\bFILTER\s*\(/gi, "FILTRO("],
+    [/\bSORT\s*\(/gi, "CLASSIFICAR("],
+    [/\bUNIQUE\s*\(/gi, "ÚNICO("],
+    [/\bXLOOKUP\s*\(/gi, "PROCX("],
+
+    // Coloque funções maiores antes das menores.
+    [/\bIFERROR\s*\(/gi, "SEERRO("],
+    [/\bCOUNTIFS\s*\(/gi, "CONT.SES("],
+    [/\bCOUNTIF\s*\(/gi, "CONT.SE("],
+    [/\bCOUNTA\s*\(/gi, "CONT.VALORES("],
+    [/\bCOUNT\s*\(/gi, "CONT.NÚM("],
+    [/\bSUMIFS\s*\(/gi, "SOMASES("],
+    [/\bSUMIF\s*\(/gi, "SOMASE("],
+    [/\bSUM\s*\(/gi, "SOMA("],
+    [/\bAVERAGEIFS\s*\(/gi, "MÉDIASES("],
+    [/\bAVERAGEIF\s*\(/gi, "MÉDIASE("],
+    [/\bAVERAGE\s*\(/gi, "MÉDIA("],
+
+    [/\bINDEX\s*\(/gi, "ÍNDICE("],
+    [/\bMATCH\s*\(/gi, "CORRESP("],
+    [/\bAGGREGATE\s*\(/gi, "AGREGAR("],
+    [/\bCOLUMNS\s*\(/gi, "COLS("],
+    [/\bCOLUMN\s*\(/gi, "COL("],
+    [/\bROWS\s*\(/gi, "LINS("],
+    [/\bROW\s*\(/gi, "LIN("],
+
+    [/\bROUNDUP\s*\(/gi, "ARREDONDAR.PARA.CIMA("],
+    [/\bROUNDDOWN\s*\(/gi, "ARREDONDAR.PARA.BAIXO("],
+    [/\bROUND\s*\(/gi, "ARRED("],
+
+    [/\bIF\s*\(/gi, "SE("],
+    [/\bAND\s*\(/gi, "E("],
+    [/\bOR\s*\(/gi, "OU("],
+    [/\bNOT\s*\(/gi, "NÃO("],
+    [/\bTODAY\s*\(/gi, "HOJE("],
+    [/\bYEAR\s*\(/gi, "ANO("],
+    [/\bMONTH\s*\(/gi, "MÊS("],
+    [/\bDAY\s*\(/gi, "DIA("],
+  ];
+
+  for (const [pattern, replacement] of translations) {
+    localized = localized.replace(pattern, replacement);
+  }
+
+  // Fórmulas digitadas manualmente no Excel em português usam ;.
+  return localized.replace(/,/g, ";");
+}
+
 function toExcelValue(value: unknown) {
   const normalized = trimHumanText(value);
   if (typeof normalized === "string" && normalized.trim().startsWith("=")) {
@@ -274,7 +326,7 @@ function addInstructionsSheet(workbook: any, rows: FormulaHelpRow[]) {
       item.target,
       item.type,
       item.purpose,
-      `'=${cleanFormula(item.originalFormula)}`,
+      `'=${localizeInstructionFormulaPtBr(item.originalFormula)}`,
       `'=${item.automaticFormula}`,
       item.steps,
       item.expected,
