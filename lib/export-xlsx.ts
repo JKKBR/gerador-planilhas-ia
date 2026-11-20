@@ -395,9 +395,35 @@ export async function exportXlsx(model: WorkbookModel): Promise<ExportReport> {
             parsedOutput.startCol,
             parsedOutput.startRow
           );
+
+          // O ExcelJS grava fórmulas, mas não as calcula. Para que a aba já
+          // abra preenchida, salvamos também o resultado inicial em cache.
+          const sourceModelSheet = model.sheets.find(
+            (candidate) => candidate.name === parsedFilter.sourceSheet
+          );
+          const criteriaColumnIndex = columnToNumber(parsedFilter.criteriaCol) - 1;
+          const sourceStartColumnIndex = columnToNumber(parsedFilter.sourceStartCol) - 1;
+          const criteriaKey = sourceModelSheet?.columns[criteriaColumnIndex]?.key;
+          const matchingRows = sourceModelSheet && criteriaKey
+            ? sourceModelSheet.rows.filter(
+                (sourceRow) =>
+                  String(sourceRow[criteriaKey] ?? "").trim() ===
+                  parsedFilter.criteriaValue.trim()
+              )
+            : [];
+
           for (let rowNumber = parsedOutput.startRow; rowNumber <= parsedOutput.endRow; rowNumber++) {
+            const matchIndex = rowNumber - parsedOutput.startRow;
             for (let colNumber = columnToNumber(parsedOutput.startCol); colNumber <= columnToNumber(parsedOutput.endCol); colNumber++) {
               const targetCol = numberToColumn(colNumber);
+              const sourceOffset = colNumber - columnToNumber(parsedOutput.startCol);
+              const sourceKey = sourceModelSheet?.columns[
+                sourceStartColumnIndex + sourceOffset
+              ]?.key;
+              const cachedResult = sourceKey
+                ? matchingRows[matchIndex]?.[sourceKey] ?? ""
+                : "";
+
               worksheet.getCell(`${targetCol}${rowNumber}`).value = {
                 formula: buildLegacyFilterFormula(
                   parsedFilter,
@@ -406,6 +432,7 @@ export async function exportXlsx(model: WorkbookModel): Promise<ExportReport> {
                   targetCol,
                   rowNumber
                 ),
+                result: cachedResult,
               };
               formulaCount++;
             }
