@@ -1,5 +1,4 @@
 export type CellValue = string | number | boolean | null;
-
 export type ColumnType = "text" | "number" | "currency" | "date" | "status";
 export type InputMode = "manual" | "calculated";
 
