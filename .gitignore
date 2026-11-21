@@ -6,3 +6,7 @@ node_modules/
 
 # Cache incremental do TypeScript
 *.tsbuildinfo
+.vercel
+.env*
+
+.env.local
