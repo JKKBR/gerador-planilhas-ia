@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { exportXlsx } from "@/lib/export-xlsx";
+import { buildWorkbookSummary } from "@/lib/workbook-summary";
 import { template } from "@/lib/templates";
 import type { WorkbookModel } from "@/lib/types";
 
@@ -32,6 +33,17 @@ export default function Home() {
     "Escolha um modelo e descreva o que deseja alterar."
   );
   const [history, setHistory] = useState<WorkbookModel[]>([]);
+
+  const [pendingBook, setPendingBook] =
+    useState<WorkbookModel | null>(null);
+
+  const pendingSummary = useMemo(
+    () =>
+      pendingBook
+        ? buildWorkbookSummary(pendingBook)
+        : null,
+    [pendingBook]
+  );
   const [warnings, setWarnings] = useState<string[]>([]);
 
   const sheet = book.sheets[active] || book.sheets[0];
@@ -118,16 +130,20 @@ export default function Home() {
         );
       }
 
-      setHistory((currentHistory) => [...currentHistory, book]);
-      setWarnings(Array.isArray(data.warnings) ? data.warnings : []);
-      setBook(data.workbook);
-      setActive(0);
-      setText("");
+      const generatedBook =
+        data.workbook as WorkbookModel;
+
+      setWarnings(
+        Array.isArray(data.warnings)
+          ? data.warnings
+          : []
+      );
+      setPendingBook(generatedBook);
       setMessage(
         data.warning ||
-          `Planilha gerada com o modelo ${
+          `Estrutura gerada com o modelo ${
             data.model || "configurado"
-          }. Revise o preview antes de baixar.`
+          }. Confira o entendimento antes de aplicar.`
       );
     } catch (error) {
       console.error("Erro ao gerar planilha:", error);
@@ -139,6 +155,29 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function confirmGeneratedWorkbook() {
+    if (!pendingBook) return;
+
+    setHistory((currentHistory) => [
+      ...currentHistory,
+      book,
+    ]);
+    setBook(pendingBook);
+    setPendingBook(null);
+    setActive(0);
+    setText("");
+    setMessage(
+      "Estrutura confirmada. Revise o preview antes de baixar."
+    );
+  }
+
+  function adjustGeneratedWorkbook() {
+    setPendingBook(null);
+    setMessage(
+      "A estrutura não foi aplicada. Ajuste a solicitação e envie novamente."
+    );
   }
 
   function changeCategory(nextCategory: (typeof categories)[number]) {
@@ -384,6 +423,60 @@ export default function Home() {
           )}
         </section>
       </section>
+
+      {pendingBook && pendingSummary && (
+        <section className="confirmationPanel">
+          <h2>Confira o entendimento</h2>
+          <h3>{pendingSummary.name}</h3>
+          <p>{pendingSummary.description}</p>
+
+          <p>
+            {pendingSummary.sheetCount} abas ·{" "}
+            {pendingSummary.totalColumns} colunas ·{" "}
+            {pendingSummary.totalPreparedRows} linhas preparadas ·{" "}
+            {pendingSummary.totalFormulas} fórmulas
+          </p>
+
+          <ul>
+            {pendingSummary.sheets.map((item) => (
+              <li key={item.id}>
+                <b>{item.name}</b>:{" "}
+                {item.columnCount} colunas,{" "}
+                {item.preparedRows} linhas preparadas
+              </li>
+            ))}
+          </ul>
+
+          {pendingSummary.warnings.length > 0 && (
+            <div>
+              <b>Avisos:</b>
+              <ul>
+                {pendingSummary.warnings.map(
+                  (warning) => (
+                    <li key={warning}>{warning}</li>
+                  )
+                )}
+              </ul>
+            </div>
+          )}
+
+          <div className="confirmationActions">
+            <button
+              type="button"
+              onClick={adjustGeneratedWorkbook}
+            >
+              Voltar e ajustar
+            </button>
+
+            <button
+              type="button"
+              onClick={confirmGeneratedWorkbook}
+            >
+              Confirmar e aplicar
+            </button>
+          </div>
+        </section>
+      )}
 
       <footer>
         Sem macros · Exportação em .xlsx · Revise fórmulas e dados antes do uso
