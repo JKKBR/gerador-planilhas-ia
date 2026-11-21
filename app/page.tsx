@@ -11,6 +11,10 @@ import {
 } from "lucide-react";
 
 import { exportXlsx } from "@/lib/export-xlsx";
+import {
+  inspectWorkbookQuality,
+  type WorkbookQualityReport,
+} from "@/lib/workbook-quality";
 import { buildWorkbookSummary } from "@/lib/workbook-summary";
 import { template } from "@/lib/templates";
 import type { WorkbookModel } from "@/lib/types";
@@ -33,6 +37,12 @@ export default function Home() {
     "Escolha um modelo e descreva o que deseja alterar."
   );
   const [history, setHistory] = useState<WorkbookModel[]>([]);
+
+  const [qualityReport, setQualityReport] =
+    useState<WorkbookQualityReport | null>(null);
+
+  const [exporting, setExporting] =
+    useState(false);
 
   const [pendingBook, setPendingBook] =
     useState<WorkbookModel | null>(null);
@@ -180,6 +190,99 @@ export default function Home() {
     );
   }
 
+  function openQualityReport() {
+    const report = inspectWorkbookQuality(book);
+    setQualityReport(report);
+
+    if (report.status === "blocked") {
+      setMessage(
+        "O download foi bloqueado por problemas na estrutura da planilha."
+      );
+      return;
+    }
+
+    if (report.status === "warning") {
+      setMessage(
+        "A planilha está pronta, mas possui avisos para revisão."
+      );
+      return;
+    }
+
+    setMessage("A planilha está pronta para baixar.");
+  }
+
+  function closeQualityReport() {
+    if (exporting) return;
+    setQualityReport(null);
+  }
+
+  async function confirmQualityDownload() {
+    if (
+      !qualityReport ||
+      qualityReport.status === "blocked"
+    ) {
+      return;
+    }
+
+    setExporting(true);
+
+    try {
+      const report = await exportXlsx(book);
+
+      if (!report.downloaded || report.errors.length > 0) {
+        setQualityReport({
+          ...qualityReport,
+          status: "blocked",
+          title: "Download bloqueado",
+          errors: report.errors.map(
+            (issue) => issue.message
+          ),
+          warnings: [
+            ...qualityReport.warnings,
+            ...report.warnings.map(
+              (issue) => issue.message
+            ),
+          ],
+        });
+
+        setMessage(
+          "O exportador encontrou problemas críticos e não gerou o arquivo."
+        );
+        return;
+      }
+
+      setQualityReport(null);
+
+      const warningCount =
+        qualityReport.warnings.length +
+        report.warnings.length;
+
+      setMessage(
+        warningCount > 0
+          ? `Arquivo gerado com ${warningCount} aviso(s) e ${report.formulaCount} fórmula(s).`
+          : `Arquivo gerado com ${report.formulaCount} fórmula(s).`
+      );
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Erro desconhecido durante a exportação.";
+
+      setQualityReport({
+        ...qualityReport,
+        status: "blocked",
+        title: "Falha na exportação",
+        errors: [errorMessage],
+      });
+
+      setMessage(
+        `Erro ao exportar: ${errorMessage}`
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function changeCategory(nextCategory: (typeof categories)[number]) {
     setCategory(nextCategory);
     setBook(template(nextCategory));
@@ -201,27 +304,6 @@ export default function Home() {
     setMessage("Última alteração desfeita.");
   }
 
-  async function downloadWorkbook() {
-    setMessage("Validando fórmulas e preparando o arquivo...");
-    try {
-      const report = await exportXlsx(book);
-      if (!report.downloaded) {
-        const details = report.errors
-          .slice(0, 3)
-          .map((issue) => `${issue.sheet}${issue.cell ? ` ${issue.cell}` : ""}: ${issue.message}`)
-          .join(" | ");
-        setMessage(`Download bloqueado: ${details || "foram encontrados erros de validação."}`);
-        return;
-      }
-      setMessage(
-        `Arquivo gerado com ${report.formulaCount.toLocaleString("pt-BR")} fórmula(s)` +
-          (report.warnings.length ? ` e ${report.warnings.length} aviso(s).` : ".")
-      );
-    } catch (error) {
-      setMessage(`Erro ao exportar: ${error instanceof Error ? error.message : "erro desconhecido"}.`);
-    }
-  }
-
   const max = Math.max(1, ...chart.map((item) => item.value));
 
   return (
@@ -236,8 +318,14 @@ export default function Home() {
             <span>Gerador interno para Excel</span>
           </div>
         </div>
-        <button className="download" onClick={() => void downloadWorkbook()}>
-          <Download size={18} /> Baixar .xlsx
+        <button
+          className="download"
+          type="button"
+          onClick={openQualityReport}
+          disabled={exporting}
+        >
+          <Download size={18} />
+          {exporting ? "Gerando..." : "Baixar .xlsx"}
         </button>
       </header>
 
@@ -476,6 +564,139 @@ export default function Home() {
             </button>
           </div>
         </section>
+      )}
+
+      {qualityReport && (
+        <div
+          className="qualityOverlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="qualityTitle"
+        >
+          <section
+            className={`qualityCard quality-${qualityReport.status}`}
+          >
+            <div className="qualityHeader">
+              <div>
+                <span>RELATÓRIO DE QUALIDADE</span>
+                <h2 id="qualityTitle">
+                  {qualityReport.title}
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                className="qualityClose"
+                onClick={closeQualityReport}
+                disabled={exporting}
+                aria-label="Fechar relatório"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="qualityMetrics">
+              <div>
+                <strong>{qualityReport.sheetCount}</strong>
+                <span>abas</span>
+              </div>
+              <div>
+                <strong>{qualityReport.columnCount}</strong>
+                <span>colunas</span>
+              </div>
+              <div>
+                <strong>{qualityReport.preparedRowCount}</strong>
+                <span>linhas preparadas</span>
+              </div>
+              <div>
+                <strong>{qualityReport.formulaCount}</strong>
+                <span>regras de fórmula</span>
+              </div>
+            </div>
+
+            {qualityReport.errors.length > 0 && (
+              <div
+                className="qualityProblems qualityErrors"
+                role="alert"
+              >
+                <b>Problemas que impedem o download</b>
+                <ul>
+                  {qualityReport.errors
+                    .slice(0, 5)
+                    .map((error) => (
+                      <li key={error}>{error}</li>
+                    ))}
+                </ul>
+
+                {qualityReport.errors.length > 5 && (
+                  <p>
+                    E mais{" "}
+                    {qualityReport.errors.length - 5} erro(s).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {qualityReport.warnings.length > 0 && (
+              <div className="qualityProblems qualityWarnings">
+                <b>Avisos para revisão</b>
+                <ul>
+                  {qualityReport.warnings
+                    .slice(0, 5)
+                    .map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                </ul>
+
+                {qualityReport.warnings.length > 5 && (
+                  <p>
+                    E mais{" "}
+                    {qualityReport.warnings.length - 5} aviso(s).
+                  </p>
+                )}
+              </div>
+            )}
+
+            {qualityReport.errors.length === 0 &&
+              qualityReport.warnings.length === 0 && (
+                <div className="qualityReady">
+                  Nenhum problema estrutural foi encontrado.
+                </div>
+              )}
+
+            <div
+              className="qualityActions"
+              aria-live="polite"
+            >
+              <button
+                type="button"
+                className="secondaryAction"
+                onClick={closeQualityReport}
+                disabled={exporting}
+              >
+                Voltar e revisar
+              </button>
+
+              <button
+                type="button"
+                className="primaryAction"
+                onClick={() =>
+                  void confirmQualityDownload()
+                }
+                disabled={
+                  exporting ||
+                  qualityReport.status === "blocked"
+                }
+              >
+                {exporting
+                  ? "Gerando arquivo..."
+                  : qualityReport.status === "warning"
+                    ? "Baixar mesmo assim"
+                    : "Confirmar download"}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       <footer>
