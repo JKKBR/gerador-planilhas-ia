@@ -12,9 +12,16 @@ import {
 
 import { exportXlsx } from "@/lib/export-xlsx";
 import {
+
   inspectWorkbookQuality,
   type WorkbookQualityReport,
 } from "@/lib/workbook-quality";
+
+import {
+  formatApiErrorMessage,
+  readApiError,
+} from "@/lib/api-error";
+
 import { buildWorkbookSummary } from "@/lib/workbook-summary";
 import { template } from "@/lib/templates";
 import type { WorkbookModel } from "@/lib/types";
@@ -36,6 +43,9 @@ export default function Home() {
   const [message, setMessage] = useState(
     "Escolha um modelo e descreva o que deseja alterar."
   );
+
+  const [apiErrorDetails, setApiErrorDetails] =
+    useState<string[]>([]);
   const [history, setHistory] = useState<WorkbookModel[]>([]);
 
   const [qualityReport, setQualityReport] =

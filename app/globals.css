@@ -229,6 +229,7 @@
   color: #ffffff;
 }
 
+
 /* Relatório de qualidade antes do download */
 .qualityOverlay {
   position: fixed;
@@ -373,4 +374,23 @@
   .qualityActions button {
     width: 100%;
   }
+}
+
+.apiErrorDetails {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid #fca5a5;
+  border-radius: 12px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 0.86rem;
+}
+
+.apiErrorDetails ul {
+  margin: 7px 0 0;
+  padding-left: 19px;
+}
+
+.apiErrorDetails li + li {
+  margin-top: 4px;
 }
