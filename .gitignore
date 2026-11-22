@@ -6,3 +6,12 @@ node_modules/
 
 # Cache incremental do TypeScript
 *.tsbuildinfo
+.vercel
+.env*
+
+.env.local
+
+# Configurações locais e segredos
+.vercel/
+.env*
+!.env.example
